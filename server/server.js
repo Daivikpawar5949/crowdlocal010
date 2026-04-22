@@ -70,14 +70,17 @@ function resolveRoomName(input) {
 const DEFAULT_ROOMS = [
   { name: 'Main Hall', capacity: 200 },
   { name: 'Food Court', capacity: 50 },
-  { name: 'VIP Room', capacity: 20 },
+  { name: 'VIP Room', capacity: 2 },
 ];
 
 async function seedRooms() {
   for (const room of DEFAULT_ROOMS) {
     await Room.findOneAndUpdate(
       { name: room.name },
-      { $setOnInsert: room },
+      {
+        $set: { capacity: room.capacity },
+        $setOnInsert: { currentOccupancy: 0 },
+      },
       { upsert: true, new: true }
     );
   }
@@ -110,20 +113,43 @@ async function getRoomState() {
 
 // ── REST API ───────────────────────────────────────────
 
+function isPrivateLanIPv4(ip) {
+  return (
+    ip.startsWith('192.168.') ||
+    ip.startsWith('10.') ||
+    /^172\.(1[6-9]|2\d|3[0-1])\./.test(ip)
+  );
+}
+
+function pickLanIpAddress() {
+  const interfaces = os.networkInterfaces();
+  const preferredOrder = ['en0', 'en1', 'eth0', 'wlan0'];
+  const candidates = [];
+
+  for (const [name, addrs] of Object.entries(interfaces)) {
+    for (const iface of addrs || []) {
+      if (iface.family !== 'IPv4' || iface.internal) continue;
+      candidates.push({ name, address: iface.address });
+    }
+  }
+
+  // Prefer common active LAN interfaces with private IP ranges.
+  for (const pref of preferredOrder) {
+    const hit = candidates.find((c) => c.name === pref && isPrivateLanIPv4(c.address));
+    if (hit) return hit.address;
+  }
+
+  // Otherwise, return any private LAN IPv4.
+  const privateHit = candidates.find((c) => isPrivateLanIPv4(c.address));
+  if (privateHit) return privateHit.address;
+
+  // Last resort: first non-internal IPv4.
+  return candidates[0]?.address || 'localhost';
+}
+
 // GET /api/network-info — return the server's LAN IP for QR code generation
 app.get('/api/network-info', (_req, res) => {
-  const interfaces = os.networkInterfaces();
-  let lanIp = 'localhost';
-  for (const name of Object.keys(interfaces)) {
-    for (const iface of interfaces[name]) {
-      // Skip internal (loopback) and non-IPv4 addresses
-      if (iface.family === 'IPv4' && !iface.internal) {
-        lanIp = iface.address;
-        break;
-      }
-    }
-    if (lanIp !== 'localhost') break;
-  }
+  const lanIp = pickLanIpAddress();
   res.json({ ip: lanIp });
 });
 
@@ -132,6 +158,20 @@ app.get('/api/rooms', async (_req, res) => {
   try {
     const state = await getRoomState();
     res.json({ success: true, rooms: state });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/present-users — list users currently inside any room
+app.get('/api/present-users', async (_req, res) => {
+  try {
+    const users = await User.find({ currentLocation: { $ne: null } })
+      .sort({ name: 1 })
+      .select({ _id: 0, name: 1, currentLocation: 1, timestamp: 1 })
+      .lean();
+
+    res.json({ success: true, users });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -163,7 +203,7 @@ app.post('/api/scan', async (req, res) => {
     if (targetRoom.currentOccupancy >= targetRoom.capacity) {
       return res.status(409).json({
         success: false,
-        error: `"${roomName}" is at full capacity (${targetRoom.capacity}).`,
+        error: `Capacity full. Cannot enter more people in ${roomName}.`,
       });
     }
 

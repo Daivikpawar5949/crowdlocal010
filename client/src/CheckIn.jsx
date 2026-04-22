@@ -1,30 +1,36 @@
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 
-// Dynamically resolve backend so it works from any device on the LAN
-const SERVER_URL = `${window.location.protocol}//${window.location.hostname}:5001`;
+// Use same-origin API so Vite proxy handles backend access in dev (works reliably on mobile).
+const API_BASE = window.location.origin;
 
 // ── Slug → Display Name Map ────────────────────────────
 const SLUG_TO_DISPLAY = {
   MainHall: 'Main Hall',
   FoodCourt: 'Food Court',
   VIPRoom: 'VIP Room',
+  ExitGate: 'Exit Gate',
 };
 
 const ROOM_ACCENT = {
-  MainHall: { gradient: 'from-blue-600 to-blue-700', ring: 'ring-blue-500/30', text: 'text-blue-400', bg: 'bg-blue-500' },
-  FoodCourt: { gradient: 'from-emerald-600 to-emerald-700', ring: 'ring-emerald-500/30', text: 'text-emerald-400', bg: 'bg-emerald-500' },
-  VIPRoom: { gradient: 'from-purple-600 to-purple-700', ring: 'ring-purple-500/30', text: 'text-purple-400', bg: 'bg-purple-500' },
+  MainHall: { gradient: 'from-sky-500 to-blue-700', ring: 'ring-blue-500/30', text: 'text-blue-300', bg: 'bg-blue-500' },
+  FoodCourt: { gradient: 'from-emerald-500 to-teal-700', ring: 'ring-emerald-500/30', text: 'text-emerald-300', bg: 'bg-emerald-500' },
+  VIPRoom: { gradient: 'from-amber-500 to-orange-700', ring: 'ring-amber-500/30', text: 'text-amber-300', bg: 'bg-amber-500' },
+  ExitGate: { gradient: 'from-rose-500 to-red-700', ring: 'ring-red-500/30', text: 'text-red-300', bg: 'bg-red-500' },
 };
 
 export default function CheckIn() {
   const { roomName } = useParams(); // slug like "MainHall"
   const displayName = SLUG_TO_DISPLAY[roomName] || roomName;
   const accent = ROOM_ACCENT[roomName] || ROOM_ACCENT.MainHall;
+  const isExitFlow = roomName === 'ExitGate';
 
   const [name, setName] = useState('');
   const [status, setStatus] = useState(null); // { type: 'success'|'error', text }
   const [loading, setLoading] = useState(false);
+  const statusIsCapacityFull =
+    status?.type === 'error' &&
+    status?.text?.toLowerCase().includes('capacity full');
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -37,10 +43,15 @@ export default function CheckIn() {
     setStatus(null);
 
     try {
-      const res = await fetch(`${SERVER_URL}/api/scan`, {
+      const endpoint = isExitFlow ? '/api/exit' : '/api/scan';
+      const payload = isExitFlow
+        ? { userName: name.trim() }
+        : { userName: name.trim(), roomName };
+
+      const res = await fetch(`${API_BASE}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userName: name.trim(), roomName }),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
 
@@ -58,26 +69,29 @@ export default function CheckIn() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center px-4 py-8">
+    <div className="min-h-screen flex items-center justify-center px-4 py-8 relative grid-haze">
       <div className="w-full max-w-md">
         {/* Logo / Branding */}
-        <div className="text-center mb-8">
-          <div className={`inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br ${accent.gradient} shadow-lg mb-4`}>
+        <div className="text-center mb-8 animate-rise-in">
+          <div className={`inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br ${accent.gradient} shadow-xl mb-4`}>
             <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
             </svg>
           </div>
-          <h1 className="text-2xl font-black text-white tracking-tight">Welcome to CrowdLocal</h1>
-          <p className="text-slate-400 text-sm mt-1">Real-Time Crowd Management</p>
+          <h1 className="text-2xl font-black text-white tracking-tight title-font">CrowdLocal Scan Portal</h1>
+          <p className="text-slate-400 text-sm mt-1">Fast check-in and controlled exits</p>
         </div>
 
         {/* Card */}
-        <div className="glass rounded-2xl p-8">
+        <div className="glass panel-edge rounded-2xl p-8 animate-rise-in [animation-delay:120ms]">
           {/* Room Badge */}
           <div className="text-center mb-6">
             <span className={`inline-block px-4 py-1.5 rounded-full text-sm font-semibold ${accent.text} bg-slate-800/80 border border-slate-700/50`}>
               📍 {displayName}
             </span>
+            <p className="text-xs text-slate-500 mt-2">
+              {isExitFlow ? 'Use this flow to remove a person from all rooms.' : 'Scan flow is live. Enter your name and tap once.'}
+            </p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-5">
@@ -94,15 +108,16 @@ export default function CheckIn() {
                 onChange={(e) => setName(e.target.value)}
                 autoFocus
                 autoComplete="off"
-                className="w-full px-4 py-3 bg-slate-800/80 border border-slate-700/50 rounded-xl text-white placeholder-slate-500 text-base focus:outline-none focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/20 transition-all"
+                className="w-full px-4 py-3 bg-slate-900/70 border border-slate-600/50 rounded-xl text-white placeholder-slate-500 text-base focus:outline-none focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-500/20 transition-all"
               />
+              <p className="text-[11px] text-slate-500 mt-2">Tip: use the same exact name across scans for accurate room movement.</p>
             </div>
 
             {/* Submit */}
             <button
               type="submit"
               disabled={loading}
-              className={`w-full py-3.5 rounded-xl text-white font-bold text-base bg-gradient-to-r ${accent.gradient} hover:brightness-110 transition-all disabled:opacity-50 shadow-lg shadow-black/20`}
+              className={`w-full py-3.5 rounded-xl text-white font-bold text-base bg-gradient-to-r ${accent.gradient} hover:brightness-110 hover:-translate-y-0.5 transition-all disabled:opacity-50 shadow-lg shadow-black/20`}
             >
               {loading ? (
                 <span className="flex items-center justify-center gap-2">
@@ -110,10 +125,10 @@ export default function CheckIn() {
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                   </svg>
-                  Checking in…
+                  {isExitFlow ? 'Processing exit…' : 'Checking in…'}
                 </span>
               ) : (
-                `Enter ${displayName}`
+                isExitFlow ? 'Exit All Venues' : `Enter ${displayName}`
               )}
             </button>
           </form>
@@ -124,7 +139,9 @@ export default function CheckIn() {
               className={`mt-5 px-4 py-3 rounded-xl text-sm font-medium text-center transition-all ${
                 status.type === 'success'
                   ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                  : 'bg-red-500/10 text-red-400 border border-red-500/20'
+                  : statusIsCapacityFull
+                    ? 'bg-red-500/10 text-red-300 border border-red-500/30 danger-stripes'
+                    : 'bg-red-500/10 text-red-400 border border-red-500/20'
               }`}
             >
               {status.type === 'success' ? '✅ ' : '❌ '}
@@ -135,7 +152,7 @@ export default function CheckIn() {
 
         {/* Footer */}
         <p className="text-center text-xs text-slate-600 mt-6">
-          CrowdLocal — Real-Time Event Crowd Management
+          CrowdLocal - Real-Time Event Crowd Management
         </p>
       </div>
     </div>
